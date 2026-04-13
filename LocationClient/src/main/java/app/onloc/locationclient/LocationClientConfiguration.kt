@@ -1,20 +1,14 @@
 package app.onloc.locationclient
 
 data class LocationClientConfiguration(
-    val keepTracking: Boolean = false,
     val requiredTimeInterval: Long,
     val requiredDistanceInterval: Float,
     val acceptableAccuracy: Float,
     val acceptableTimePeriod: Long,
-    val gpsMessage: String
+    val gpsMessage: String,
 )
 
 class LocationClientConfigurationDSL {
-    /**
-     * Whether the client keeps fetching locations after the first one
-     */
-    var keepTracking: Boolean = false
-
     /**
      * The interval at which the location will update.
      */
@@ -36,13 +30,14 @@ class LocationClientConfigurationDSL {
     var acceptableTimePeriod: Long = Long.MAX_VALUE
 
     /**
+     * Not implemented yet.
+     *
      * Message displayed when GPS needs to be turned on.
      */
     var gpsMessage: String = "Turn on GPS?"
 
     fun build(): LocationClientConfiguration {
         return LocationClientConfiguration(
-            keepTracking = keepTracking,
             requiredTimeInterval = requiredTimeInterval,
             requiredDistanceInterval = requiredDistanceInterval,
             acceptableAccuracy = acceptableAccuracy,

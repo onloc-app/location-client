@@ -62,7 +62,6 @@ class MainActivity : ComponentActivity() {
         val oneTimeConfig = locationClientConfig {}
 
         val runningConfig = locationClientConfig {
-            keepTracking = true
             requiredTimeInterval = 2L * 1000L
 //            requiredDistanceInterval = 12f
         }
