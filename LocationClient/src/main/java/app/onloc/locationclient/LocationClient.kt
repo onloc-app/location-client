@@ -6,10 +6,12 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
-import android.os.Handler
 import android.os.Looper
-import androidx.lifecycle.DefaultLifecycleObserver
-import androidx.lifecycle.LifecycleOwner
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 
 class LocationClient(private val context: Context, val config: LocationClientConfiguration) {
     private val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -22,103 +24,57 @@ class LocationClient(private val context: Context, val config: LocationClientCon
      * @return The device's last known [Location].
      */
     @Suppress("MissingPermission")
-    fun getLastKnownLocation(): LocationResult {
-        if (!hasPermission()) return LocationResult.PermissionDenied
+    fun getLastKnownLocation(): Result<Location?> {
+        if (!hasPermission()) return Result.failure(Exception("Permission denied"))
         if (!locationManager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) {
-            return LocationResult.ProvidersDisabled
+            return Result.failure(Exception("Permission denied"))
         }
-        return LocationResult.Success(locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER))
+        return Result.success(locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER))
     }
 
     /**
-     * Gives periodic [Location] updates.
+     * Flow that emits locations based on the provided configuration.
      *
-     * @param owner Lifecycle owner. The updates will stop when the lifecycle is destroyed.
-     * @param callback Callback triggered when a valid location is received.
+     * @return A [Flow] of [Result] containing a [Location].
      */
-    fun requestLocationUpdates(owner: LifecycleOwner, callback: (LocationResult) -> Unit) {
-        val stop = locationUpdates { result ->
-            callback(result)
-        }
-
-        owner.lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onDestroy(owner: LifecycleOwner) {
-                stop()
-                owner.lifecycle.removeObserver(this)
+    fun locationFlow(): Flow<Result<Location>> {
+        return rawLocationFlow()
+            .bestInWindow(config.requiredTimeInterval)
+            .map { result ->
+                result.fold(
+                    onSuccess = { location ->
+                        if (isLocationValid(location)) {
+                            Result.success(location)
+                        } else {
+                            Result.failure(Exception("Location is invalid"))
+                        }
+                    },
+                    onFailure = { error ->
+                        Result.failure(error)
+                    },
+                )
             }
-        })
-    }
-
-    /**
-     * Gives periodic [Location] updates. Returns a function to manually stop the service.
-     *
-     * @param callback Callback triggered when a valid location is received.
-     *
-     * @return Function that stops the updates when called.
-     */
-    fun requestLocationUpdates(callback: (LocationResult) -> Unit): () -> Unit {
-        return locationUpdates { result ->
-            callback(result)
-        }
     }
 
     @Suppress("MissingPermission")
-    private fun locationUpdates(callback: (LocationResult) -> Unit): () -> Unit {
+    private fun rawLocationFlow(): Flow<Result<Location>> = callbackFlow {
         if (!hasPermission()) {
-            callback(LocationResult.PermissionDenied)
-            return {}
+            trySend(Result.failure(Exception("Permission denied")))
+            close()
+            return@callbackFlow
         }
 
         val gpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
         val networkEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
 
         if (!gpsEnabled && !networkEnabled) {
-            callback(LocationResult.ProvidersDisabled)
-            return {}
+            trySend(Result.failure(Exception("Providers disabled")))
+            close()
+            return@callbackFlow
         }
 
-        val locations = mutableListOf<Location>()
-        val handler = Handler(Looper.getMainLooper())
-
-        lateinit var listener: LocationListener
-
-        var started = false
-
-        fun bestLocation(): Location? {
-            return locations.minByOrNull { it.accuracy }
-        }
-
-        fun stopInternal() {
-            locationManager.removeUpdates(listener)
-            handler.removeCallbacksAndMessages(null)
-        }
-
-        val decisionRunnable = object : Runnable {
-            override fun run() {
-                val best = bestLocation()
-
-                if (config.keepTracking) {
-                    if (best != null) {
-                        callback(LocationResult.Success(best))
-                    }
-                    locations.clear()
-                    handler.postDelayed(this, config.requiredTimeInterval)
-                } else {
-                    callback(LocationResult.Success(best))
-                    stopInternal()
-                }
-            }
-        }
-
-        listener = LocationListener { location ->
-            if (!started) {
-                started = true
-                handler.postDelayed(decisionRunnable, config.requiredTimeInterval)
-            }
-
-            if (isLocationValid(location)) {
-                locations.add(location)
-            }
+        val listener = LocationListener { location ->
+            trySend(Result.success(location))
         }
 
         if (gpsEnabled) {
@@ -141,7 +97,9 @@ class LocationClient(private val context: Context, val config: LocationClientCon
             )
         }
 
-        return { stopInternal() }
+        awaitClose {
+            locationManager.removeUpdates(listener)
+        }
     }
 
     /**
@@ -165,4 +123,38 @@ class LocationClient(private val context: Context, val config: LocationClientCon
         return context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
+}
+
+private fun Flow<Result<Location>>.bestInWindow(
+    windowMs: Long,
+): Flow<Result<Location>> = flow {
+    var best: Result<Location>? = null
+    var windowEnd = 0L
+
+    collect { result ->
+        val now = System.currentTimeMillis()
+
+        if (result.isFailure) {
+            best?.let { emit(it) }
+            best = null
+            windowEnd = 0L
+            emit(result)
+            return@collect
+        }
+
+        if (now >= windowEnd) {
+            best?.let { emit(it) }
+            best = null
+            emit(result)
+            windowEnd = now + windowMs
+        } else {
+            val incoming = result.getOrThrow()
+            val current = best?.getOrThrow()
+            if (current == null || incoming.accuracy < current.accuracy) {
+                best = result
+            }
+        }
+    }
+
+    best?.let { emit(it) }
 }

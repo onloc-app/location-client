@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -35,8 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.onloc.locationclient.ui.theme.LocationClientTheme
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val requestPermissionsLauncher =
@@ -61,13 +63,13 @@ class MainActivity : ComponentActivity() {
 
         val runningConfig = locationClientConfig {
             keepTracking = true
-            requiredTimeInterval = 5L * 1000L
-            requiredDistanceInterval = 12f
+            requiredTimeInterval = 2L * 1000L
+//            requiredDistanceInterval = 12f
         }
 
         setContent {
             LocationClientTheme {
-                val lifecycleOwner = LocalLifecycleOwner.current
+                val scope = rememberCoroutineScope()
 
                 val oneTimeClient = LocationClient(applicationContext, oneTimeConfig)
                 val runningClient = LocationClient(applicationContext, runningConfig)
@@ -81,13 +83,12 @@ class MainActivity : ComponentActivity() {
                 var runningLocation by rememberSaveable { mutableStateOf<Location?>(null) }
 
                 LaunchedEffect(Unit) {
-                    runningClient.requestLocationUpdates(lifecycleOwner) { result ->
-                        when (result) {
-                            is LocationResult.Success -> {
-                                runningLocation = result.location
-                            }
-                            is LocationResult.PermissionDenied -> {}
-                            is LocationResult.ProvidersDisabled -> {}
+                    runningClient.locationFlow().collect { result ->
+                        result.onSuccess {
+                            runningLocation = it
+                        }
+                        result.onFailure {
+                            it.printStackTrace()
                         }
                     }
                 }
@@ -108,16 +109,19 @@ class MainActivity : ComponentActivity() {
                                 location = currentLocation,
                                 isLoading = currentLocationLoading,
                                 onButtonClick = {
-                                    currentLocationLoading = true
-                                    oneTimeClient.requestLocationUpdates(lifecycleOwner) { result ->
-                                        when (result) {
-                                            is LocationResult.Success -> {
-                                                currentLocation = result.location
-                                                currentLocationLoading = false
+                                    scope.launch {
+                                        currentLocationLoading = true
+
+                                        oneTimeClient.locationFlow().first()
+                                            .onSuccess { location ->
+                                                println(location)
+                                                currentLocation = location
                                             }
-                                            is LocationResult.PermissionDenied -> {}
-                                            is LocationResult.ProvidersDisabled -> {}
-                                        }
+                                            .onFailure { error ->
+                                                error.printStackTrace()
+                                            }
+
+                                        currentLocationLoading = false
                                     }
                                 },
                             )
@@ -128,12 +132,9 @@ class MainActivity : ComponentActivity() {
                                 isLoading = lastKnownLocationLoading,
                                 onButtonClick = {
                                     lastKnownLocationLoading = true
-                                    when (val result = oneTimeClient.getLastKnownLocation()) {
-                                        is LocationResult.Success -> {
-                                            lastKnownLocation = result.location
-                                        }
-                                        is LocationResult.PermissionDenied -> {}
-                                        is LocationResult.ProvidersDisabled -> {}
+                                    val result = oneTimeClient.getLastKnownLocation()
+                                    result.onSuccess {
+                                        lastKnownLocation = it
                                     }
                                     lastKnownLocationLoading = false
                                 }
