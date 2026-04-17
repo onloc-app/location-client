@@ -18,7 +18,7 @@ val properties = Properties().apply {
 }
 
 group = "app.onloc"
-version = "1.0.1"
+version = "1.0.2"
 
 android {
     namespace = "app.onloc.locationclient"
@@ -60,7 +60,7 @@ mavenPublishing {
     publishToMavenCentral()
     signAllPublications()
 
-    coordinates("app.onloc", "location-client", "1.0.1")
+    coordinates("app.onloc", "location-client", "1.0.2")
 
     pom {
         name.set("Location Client")
