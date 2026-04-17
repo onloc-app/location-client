@@ -150,7 +150,7 @@ private fun Flow<Result<Location>>.bestInWindow(
         } else {
             val incoming = result.getOrThrow()
             val current = best?.getOrThrow()
-            if (current == null || incoming.accuracy < current.accuracy) {
+            if (current == null || (incoming.accuracy < current.accuracy && incoming.time > current.time)) {
                 best = result
             }
         }

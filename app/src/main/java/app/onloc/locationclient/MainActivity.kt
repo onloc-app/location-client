@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
         val runningConfig = locationClientConfig {
             requiredTimeInterval = 2L * 1000L
-//            requiredDistanceInterval = 12f
+            requiredDistanceInterval = 12f
         }
 
         setContent {
